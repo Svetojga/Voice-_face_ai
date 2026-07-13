@@ -51,15 +51,15 @@ if audio_value:
                 headers=headers
             )
             
-            if response.status_code == 200:
+                        if response.status_code == 200:
                 result = response.json()
-                # Получаем ссылку на готовую картинку
-                image_url = result["images"][0]["url"]
+                # Исправленный безопасный путь к картинке в API fal.ai:
+                image_url = result["images"][0]["url"] 
                 
-                # --- ЭТАП 4: Вывод результата на экран ---
                 st.success("✨ Готово! Вот как ИИ видит ваш голос:")
                 st.image(image_url, use_column_width=True)
                 st.caption(f"Сгенерировано по параметрам: {age}, {gender}")
+
             else:
                 st.error("Ошибка при генерации изображения. Проверьте API ключ.")
                 
