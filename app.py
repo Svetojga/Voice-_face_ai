@@ -1,60 +1,73 @@
 import streamlit as st
+import requests
 import urllib.parse
-import numpy as np
+import base64
+from openai import OpenAI
 
 # Настройка страницы приложения
 st.set_page_config(page_title="VoiceFace AI", page_icon="🎙️", layout="centered")
 st.title("🎙️ Ваш фоторобот по голосу")
-st.write("Запишите ваш голос, и ИИ воссоздаст ваш реалистичный портрет.")
+st.write("Запишите ваш голос (не менее 5 секунд), и искусственный интеллект воссоздаст ваш реалистичный портрет.")
 
 # Кнопка записи аудио
 audio_value = st.audio_input("Нажмите на микрофон для записи голоса")
 
 if audio_value:
-    st.info("🎙️ Голос успешно записан! Начинаем анализ частот...")
+    st.info("🎙️ Голос успешно записан! Нейросеть OpenAI начинает глубокий анализ биомаркеров речи...")
     
     try:
-        # --- НАСТОЯЩИЙ АНАЛИЗ ЗВУКА ---
-        # Читаем байты записанного аудиофайла
+        # Инициализируем клиента OpenAI с настройками из Secrets
+        client = OpenAI(
+            api_key=st.secrets["OPENAI_API_KEY"],
+            base_url=st.secrets["OPENAI_BASE_URL"]
+        )
+        
+        # Читаем аудио и кодируем его в base64 для безопасной передачи по API
         audio_bytes = audio_value.read()
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
         
-        # Превращаем звук в массив чисел (амплитуду волны)
-        audio_data = np.frombuffer(audio_bytes, dtype=np.int16)
-        
-        # Считаем переходы через ноль, чтобы грубо оценить частоту звука (в Гц)
-        zero_crossings = np.nonzero(np.diff(audio_data > 0))[0]
-        duration = len(audio_data) / 44100.0  # Базовая длительность при 44.1кГц
-        
-        # Вычисляем примерную частоту основного тона голоса
-        estimated_frequency = len(zero_crossings) / (2 * duration) if duration > 0 else 0
-        
-        # Классифицируем пол по частоте звука:
-        # Мужской голос обычно: 85 - 155 Гц
-        # Женский голос обычно: 165 - 255 Гц
-        if estimated_frequency > 160:
-            gender = "woman"
-            detected_sex = "Женский голос"
-            age = "25-year-old" # Примерная базовая логика для MVP
-        else:
-            gender = "man"
-            detected_sex = "Мужской голос"
-            age = "35-year-old"
+        with st.spinner("🧠 ИИ вслушивается в тембр, интонации и дыхание..."):
+            # Просим модель GPT-4o проанализировать аудио и выдать строгие параметры
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Прослушай аудиозапись речи человека. Оцени его биологический пол (man или woman), примерный возраст (например: 25-year-old, 50-year-old), расу/этническую принадлежность на английском и эмоцию голоса. Ответь строго в формате JSON, без лишнего текста, вот так: {\"gender\": \"man\", \"age\": \"30-year-old\", \"ethnicity\": \"European\", \"emotion\": \"calm\", \"ru_desc\": \"Мужчина, около 30 лет, спокойный тембр\"}"},
+                            {"type": "input_audio", "input_audio": {"data": audio_base64, "format": "wav"}}
+                        ]
+                    }
+                ],
+                response_format={"type": "json_object"}
+            )
             
-        st.success(f"📊 Анализ завершен! Оцененная частота: {int(estimated_frequency)} Гц ({detected_sex})")
-        
-        # --- ФОРМИРОВАНИЕ УМНОГО ПРОМПТА ---
-        prompt = f"Hyperrealistic close-up studio photo of a {age} European {gender}, calm expression, highly detailed skin texture, 8k resolution, professional lighting, photorealistic"
-        
-        with st.spinner("🎨 Нейросеть рисует портрет на основе вашего тембра..."):
+            # Разбираем ответ от аналитической нейросети
+            ai_analysis = eval(response.choices[0].message.content)
+            
+            gender = ai_analysis.get("gender", "man")
+            age = ai_analysis.get("age", "30-year-old")
+            ethnicity = ai_analysis.get("ethnicity", "European")
+            emotion = ai_analysis.get("emotion", "calm")
+            ru_desc = ai_analysis.get("ru_desc", "Голос проанализирован")
+            
+            st.success(f"📊 Результат анализа голоса: {ru_desc} (настроение: {emotion})")
+            
+        # --- ГЕНЕРАЦИЯ ПОРТРЕТА НА ОСНОВЕ РЕАЛЬНЫХ ДАННЫХ ---
+        with st.spinner("🎨 Передаем фоторобот художнику..."):
+            prompt = f"Hyperrealistic close-up studio photo of a {age} {ethnicity} {gender}, {emotion} facial expression, high detailed skin texture, 8k resolution, professional lighting, photorealistic"
+            
             encoded_prompt = urllib.parse.quote(prompt)
-            # Добавляем случайный параметр (seed), чтобы картинки всегда были разными при новой записи
+            
+            # Используем надежный и быстрый публичный шлюз картинок Flux
             import random
             seed = random.randint(1, 99999)
             image_url = f"https://pollinations.ai{encoded_prompt}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
             
-            # Выводим результат
+            # Выводим готовую картинку на экран
             st.image(image_url, use_column_width=True)
-            st.caption(f"Сгенерировано для: {detected_sex}, {age}")
+            st.caption(f"Визуальный профиль ИИ собран по параметрам вашей речи.")
                 
     except Exception as e:
-        st.error(f"Произошла ошибка при анализе звука: {e}")
+        st.error(f"Произошла ошибка при анализе ИИ: {e}")
+        st.write("Пожалуйста, убедитесь, что вы записали четкую речь и правильно настроили ключи в Secrets.")
