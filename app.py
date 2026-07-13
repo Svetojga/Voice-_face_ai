@@ -1,73 +1,76 @@
 import streamlit as st
-import requests
 import urllib.parse
-import base64
-from openai import OpenAI
+import speech_recognition as sr
+import io
 
 # Настройка страницы приложения
 st.set_page_config(page_title="VoiceFace AI", page_icon="🎙️", layout="centered")
 st.title("🎙️ Ваш фоторобот по голосу")
-st.write("Запишите ваш голос (не менее 5 секунд), и искусственный интеллект воссоздаст ваш реалистичный портрет.")
+st.write("Назовите в микрофон свой пол, примерный возраст или просто скажите пару фраз (например: 'Я парень, мне 25 лет'). ИИ воссоздаст ваш портрет!")
 
 # Кнопка записи аудио
 audio_value = st.audio_input("Нажмите на микрофон для записи голоса")
 
 if audio_value:
-    st.info("🎙️ Голос успешно записан! Нейросеть OpenAI начинает глубокий анализ биомаркеров речи...")
+    st.info("🎙️ Голос успешно записан! Начинаем распознавание речи...")
     
     try:
-        # Инициализируем клиента OpenAI с настройками из Secrets
-        client = OpenAI(
-            api_key=st.secrets["OPENAI_API_KEY"],
-            base_url=st.secrets["OPENAI_BASE_URL"]
-        )
-        
-        # Читаем аудио и кодируем его в base64 для безопасной передачи по API
+        # Читаем аудиофайл из интерфейса
         audio_bytes = audio_value.read()
-        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
         
-        with st.spinner("🧠 ИИ вслушивается в тембр, интонации и дыхание..."):
-            # Просим модель GPT-4o проанализировать аудио и выдать строгие параметры
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Прослушай аудиозапись речи человека. Оцени его биологический пол (man или woman), примерный возраст (например: 25-year-old, 50-year-old), расу/этническую принадлежность на английском и эмоцию голоса. Ответь строго в формате JSON, без лишнего текста, вот так: {\"gender\": \"man\", \"age\": \"30-year-old\", \"ethnicity\": \"European\", \"emotion\": \"calm\", \"ru_desc\": \"Мужчина, около 30 лет, спокойный тембр\"}"},
-                            {"type": "input_audio", "input_audio": {"data": audio_base64, "format": "wav"}}
-                        ]
-                    }
-                ],
-                response_format={"type": "json_object"}
-            )
+        # Настраиваем инструмент распознавания речи
+        recognizer = sr.Recognizer()
+        audio_file = io.BytesIO(audio_bytes)
+        
+        with sr.AudioFile(audio_file) as source:
+            audio_data = recognizer.record(source)
             
-            # Разбираем ответ от аналитической нейросети
-            ai_analysis = eval(response.choices[0].message.content)
+        with st.spinner("🧠 Расшифровываем вашу речь..."):
+            # Бесплатное распознавание русского текста без всяких API-ключей
+            text_result = recognizer.recognize_google(audio_data, language="ru-RU")
+            st.success(f"🗣️ ИИ услышал фразу: «{text_result}»")
             
-            gender = ai_analysis.get("gender", "man")
-            age = ai_analysis.get("age", "30-year-old")
-            ethnicity = ai_analysis.get("ethnicity", "European")
-            emotion = ai_analysis.get("emotion", "calm")
-            ru_desc = ai_analysis.get("ru_desc", "Голос проанализирован")
+        # Базовые параметры по умолчанию
+        gender = "man"
+        age = "30-year-old"
+        detected_info = "Мужчина, 30 лет (по умолчанию)"
+        
+        # Простая умная логика: ищем маркеры пола и возраста в тексте речи
+        text_lower = text_result.lower()
+        
+        if "девушка" in text_lower or "женщина" in text_lower or "пала" in text_lower or "слышала" in text_lower:
+            gender = "woman"
+            detected_info = "Женщина"
             
-            st.success(f"📊 Результат анализа голоса: {ru_desc} (настроение: {emotion})")
+        if "парень" in text_lower or "мужчина" in text_lower or "слышал" in text_lower:
+            gender = "man"
+            detected_info = "Мужчина"
             
-        # --- ГЕНЕРАЦИЯ ПОРТРЕТА НА ОСНОВЕ РЕАЛЬНЫХ ДАННЫХ ---
-        with st.spinner("🎨 Передаем фоторобот художнику..."):
-            prompt = f"Hyperrealistic close-up studio photo of a {age} {ethnicity} {gender}, {emotion} facial expression, high detailed skin texture, 8k resolution, professional lighting, photorealistic"
-            
+        # Ищем упоминание примерного возраста
+        if "20" in text_lower or "двадцать" in text_lower:
+            age = "20-year-old"
+            detected_info += ", 20 лет"
+        elif "40" in text_lower or "сорок" in text_lower:
+            age = "40-year-old"
+            detected_info += ", 40 лет"
+        else:
+            age = "30-year-old"
+            detected_info += ", 30 лет"
+
+        # --- ГЕНЕРАЦИЯ КАРТИНКИ ---
+        with st.spinner("🎨 Нейросеть рисует ваш портрет..."):
+            prompt = f"Hyperrealistic close-up studio photo of a {age} European {gender}, calm expression, highly detailed skin texture, 8k resolution, professional lighting, photorealistic"
             encoded_prompt = urllib.parse.quote(prompt)
             
-            # Используем надежный и быстрый публичный шлюз картинок Flux
             import random
             seed = random.randint(1, 99999)
             image_url = f"https://pollinations.ai{encoded_prompt}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
             
-            # Выводим готовую картинку на экран
+            # Выводим результат
             st.image(image_url, use_column_width=True)
-            st.caption(f"Визуальный профиль ИИ собран по параметрам вашей речи.")
+            st.caption(f"Профиль построен по распознанному маркеру: {detected_info}")
                 
+    except sr.UnknownValueError:
+        st.warning("🤖 ИИ не смог разобрать слова. Попробуйте надиктовать текст погромче и почетче!")
     except Exception as e:
-        st.error(f"Произошла ошибка при анализе ИИ: {e}")
-        st.write("Пожалуйста, убедитесь, что вы записали четкую речь и правильно настроили ключи в Secrets.")
+        st.error(f"Произошла ошибка в коде: {e}")
